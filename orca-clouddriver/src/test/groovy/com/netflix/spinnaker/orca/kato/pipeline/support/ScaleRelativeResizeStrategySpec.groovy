@@ -16,14 +16,13 @@
 
 package com.netflix.spinnaker.orca.kato.pipeline.support
 
+import java.util.concurrent.atomic.AtomicInteger
 import com.netflix.spinnaker.orca.clouddriver.pipeline.servergroup.support.Location
 import com.netflix.spinnaker.orca.clouddriver.pipeline.servergroup.support.TargetServerGroup
 import com.netflix.spinnaker.orca.clouddriver.utils.OortHelper
 import com.netflix.spinnaker.orca.pipeline.model.Stage
 import spock.lang.Specification
 import spock.lang.Unroll
-
-import java.util.concurrent.atomic.AtomicInteger
 
 class ScaleRelativeResizeStrategySpec extends Specification {
   OortHelper oortHelper = Mock(OortHelper)
@@ -52,7 +51,7 @@ class ScaleRelativeResizeStrategySpec extends Specification {
     "scaleNum" | "scale_down" | 6     || 4
     "scaleNum" | "scale_down" | 100   || 0
     serverGroupName = asgName()
-    targetServerGroup = Optional.of(new TargetServerGroup(serverGroup: [name: serverGroupName, region: region, type: cloudProvider, capacity: [min: 10, max: 10, desired: 10]]))
+    targetServerGroup = Optional.of(new TargetServerGroup(name: serverGroupName, region: region, type: cloudProvider, capacity: [min: 10, max: 10, desired: 10]))
     expected = new ResizeStrategy.Capacity(want, want, want)
     scalePct = method == 'scalePct' ? value : null
     scaleNum = method == 'scaleNum' ? value : null
@@ -65,7 +64,7 @@ class ScaleRelativeResizeStrategySpec extends Specification {
   static final String region = 'us-east-1'
   static final String account = 'test'
   static final String clusterName = application + '-main'
-  static final Location location = TargetServerGroup.Support.locationFromCloudProviderValue(cloudProvider, region)
+  static final Location location = new Location(type: Location.Type.REGION, value: region)
 
   ResizeStrategy.OptionalConfiguration cfg(String direction, Integer scalePct = null, Integer scaleNum = null) {
     def cfg = new ResizeStrategy.OptionalConfiguration()

@@ -57,6 +57,12 @@ interface OortService {
                                             @Path("summaryType") String summaryType,
                                             @Query("onlyEnabled") String onlyEnabled)
 
+  @GET("/applications/{app}/jobs/{account}/{region}/{id}")
+  Response getJob(@Path("app") String app,
+                  @Path("account") String account,
+                  @Path("region") String region,
+                  @Path("id") String id)
+
   @GET("/search")
   Response getSearchResults(@Query("q") String searchTerm,
                             @Query("type") String type,
@@ -76,21 +82,24 @@ interface OortService {
                                    @Path("region") String region,
                                    @Path("name") String name)
 
-  /**
-   * @deprecated Use "/cache/{cloudProvider}/{type}" instead
-   */
-  @Deprecated
-  @POST("/cache/{type}")
-  Response forceCacheUpdate(@Path("type") String type, @Body Map<String, ? extends Object> data)
-
   @POST("/cache/{cloudProvider}/{type}")
   Response forceCacheUpdate(@Path("cloudProvider") String cloudProvider,
                             @Path("type") String type,
                             @Body Map<String, ? extends Object> data)
 
+  @GET("/cache/{cloudProvider}/{type}")
+  Collection<Map> pendingForceCacheUpdates(@Path("cloudProvider") String cloudProvider,
+                                           @Path("type") String type)
+
   @GET("/{type}/images/{account}/{region}/{imageId}")
-  Response getByAmiId(@Path("type") String type,
-                      @Path("account") String account,
-                      @Path("region") String region,
-                      @Path("imageId") imageId)
+  List<Map> getByAmiId(@Path("type") String type,
+                       @Path("account") String account,
+                       @Path("region") String region,
+                       @Path("imageId") imageId)
+
+  @GET("/{type}/images/find")
+  List<Map> findImage(@Path("type") String type,
+                      @Query("q") String query,
+                      @Query("account") String account,
+                      @Query("region") String region)
 }

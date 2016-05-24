@@ -39,6 +39,7 @@ dependencies {
   compile project(":orca-flex")
   compile project(":orca-echo")
   compile project(":orca-mine")
+  compile project(":orca-mahe")
   compile project(":orca-rush")
   compile project(":orca-igor")
   compile project(":orca-eureka")
@@ -50,6 +51,9 @@ dependencies {
   spinnaker.group('test')
   testCompile spinnaker.dependency('batchTest')
   testCompile project(":orca-test")
+
+  //this brings in the jetty GzipFilter which boot will autoconfigure
+  runtime 'org.eclipse.jetty:jetty-servlets:9.2.11.v20150529'
 }
 
 applicationName = 'orca'
@@ -100,6 +104,7 @@ ospackage {
   packageName = "spinnaker-" + project.applicationName
   version = toVers(project.version.toString())
   release '3'
+  os = LINUX
   // installer scripts
   postInstall = file('pkg_scripts/postInstall.sh')
   postUninstall = file('pkg_scripts/postUninstall.sh')

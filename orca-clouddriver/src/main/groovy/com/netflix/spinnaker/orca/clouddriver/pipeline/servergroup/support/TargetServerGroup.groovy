@@ -16,61 +16,90 @@
 
 package com.netflix.spinnaker.orca.clouddriver.pipeline.servergroup.support
 
-import com.netflix.frigga.Names
-import com.netflix.spinnaker.orca.kato.pipeline.support.StageData
-import com.netflix.spinnaker.orca.pipeline.model.Stage
 import groovy.transform.InheritConstructors
 import groovy.transform.ToString
 import groovy.util.logging.Slf4j
+import com.netflix.frigga.Names
+import com.netflix.spinnaker.orca.kato.pipeline.support.StageData
+import com.netflix.spinnaker.orca.pipeline.model.Stage
 
 /**
  * A TargetServerGroup is a ServerGroup that is dynamically resolved using a target like "current" or "oldest".
  */
-@ToString(includeNames = true)
 class TargetServerGroup {
   // Delegates all Map interface calls to this object.
-  @Delegate Map<String, Object> serverGroup = [:]
+  @Delegate private final Map<String, Object> serverGroup
+
+  TargetServerGroup(Map<String, Object> serverGroupData) {
+    serverGroup = new HashMap(serverGroupData).asImmutable()
+  }
 
   /**
    * All invocations of this method should use the full 'getLocation()' signature, instead of the shorthand dot way
    * (i.e. "serverGroup.location"). Otherwise, the property 'location' is looked for in the serverGroup map, which is
    * very likely not there.
    */
-  Location getLocation() {
-    return Support.locationFromServerGroup(serverGroup)
+  Location getLocation(Location.Type exactLocationType = null) {
+    return Support.locationFromServerGroup(serverGroup, exactLocationType)
   }
 
   Map toClouddriverOperationPayload(String account) {
     //TODO(cfieber) - add an endpoint on Clouddriver to do provider appropriate conversion of a TargetServerGroup
     def op = [
-      credentials: account,
-      accountName: account,
+      credentials    : account,
+      accountName    : account,
       serverGroupName: serverGroup.name,
-      asgName: serverGroup.name,
-      cloudProvider: serverGroup.type,
-      providerType: serverGroup.type
+      asgName        : serverGroup.name,
+      cloudProvider  : serverGroup.type,
+      providerType   : serverGroup.type
     ]
 
     def loc = getLocation()
     if (loc.type == Location.Type.REGION) {
       op.region = loc.value
-      op.regions = [loc.value]
     } else if (loc.type == Location.Type.ZONE) {
       op.zone = loc.value
-      op.zones = [loc.value]
+    } else if (loc.type == Location.Type.NAMESPACE) {
+      op.namespace = loc.value
     } else {
       throw new IllegalStateException("unsupported location type $loc.type")
     }
     return op
   }
 
+  @Override
+  public String toString() {
+    "TargetServerGroup$serverGroup"
+  }
+
   public static class Support {
-    static Location locationFromServerGroup(Map<String, Object> serverGroup) {
-      // All Google server group operations currently work with zones, not regions.
-      if (serverGroup.type == "gce") {
-        return new Location(type: Location.Type.ZONE, value: serverGroup.zones[0])
+    static Location resolveLocation(String cloudProvider, String zone, String namespace, String region) {
+      if (cloudProvider == "gce" && zone) {
+        return Location.zone(zone)
+      } else if (namespace) {
+        return Location.namespace(namespace)
+      } else if (region) {
+        return Location.region(region)
+      } else {
+        throw new IllegalArgumentException("No known location type provided. Must be `region`, `zone` or `namespace`.")
       }
-      return new Location(type: Location.Type.REGION, value: serverGroup.region)
+    }
+
+    static Location locationFromServerGroup(Map<String, Object> serverGroup, Location.Type exactLocationType) {
+      switch (exactLocationType) {
+        case (Location.Type.ZONE):
+          return Location.zone(serverGroup.zone)
+        case (Location.Type.NAMESPACE):
+          return Location.namespace(serverGroup.namespace)
+        case (Location.Type.REGION):
+          return Location.region(serverGroup.region)
+      }
+
+      try {
+        return resolveLocation(serverGroup.type, serverGroup.zone, serverGroup.namespace, serverGroup.region)
+      } catch (e) {
+        throw new IllegalArgumentException("Incorrect location specified for ${serverGroup.serverGroupName ?: serverGroup.name}: ${e.message}")
+      }
     }
 
     static Location locationFromOperation(Map<String, Object> operation) {
@@ -81,21 +110,15 @@ class TargetServerGroup {
     }
 
     static Location locationFromStageData(StageData stageData) {
-      if (stageData.cloudProvider == "gce") {
-        def zones = stageData.availabilityZones.values().flatten().toArray()
-        if (!zones) {
-          throw new IllegalStateException("Cannot find GCE zones in stage data ${stageData}")
-        }
-        return new Location(type: Location.Type.ZONE, value: zones[0])
+      try {
+        List zones = stageData.availabilityZones?.values()?.flatten()?.toArray()
+        return resolveLocation(stageData.cloudProvider, zones?.get(0), stageData.namespace, stageData.region)
+      } catch (e) {
+        throw new IllegalArgumentException("Incorrect location specified for ${stageData}: ${e.message}")
       }
-      return new Location(type: Location.Type.REGION, value: stageData.region)
-    }
-
-    static Location locationFromCloudProviderValue(String cloudProvider, String value) {
-      Location.Type type = cloudProvider == 'gce' ? Location.Type.ZONE : Location.Type.REGION
-      return new Location(type: type, value: value)
     }
   }
+
   static boolean isDynamicallyBound(Stage stage) {
     Params.fromStage(stage).target?.isDynamic()
   }
@@ -121,10 +144,10 @@ class TargetServerGroup {
       }
     }
 
-    // asgName used when specifically targeting a server group
+    // serverGroupName used when specifically targeting a server group
     // TODO(ttomsu): This feels dirty - consider structuring to enable an 'exact' Target that just specifies the exact
     // server group name to fetch?
-    String asgName
+    String serverGroupName
 
     // Alternatively to asgName, the combination of target and cluster can be used.
     Target target
@@ -135,26 +158,28 @@ class TargetServerGroup {
     String cloudProvider = "aws"
 
     String getApp() {
-      Names.parseName(asgName ?: cluster)?.app
+      Names.parseName(serverGroupName ?: cluster)?.app
     }
 
     String getCluster() {
-      cluster ?: Names.parseName(asgName)?.cluster
+      cluster ?: Names.parseName(serverGroupName)?.cluster
     }
 
     static Params fromStage(Stage stage) {
       Params p = stage.mapTo(Params)
 
-      if (stage.context.zones) {
-        if (stage.context.regions && stage.context.cloudProvider != "gce") {
-          // Prefer regions if both are specified, except for GCE.
-          p.locations = stage.context.regions.collect { String r -> Location.region(r) }
-        } else {
-          p.locations = stage.context.zones.collect { String z -> Location.zone(z) }
-        }
-      } else {
-        // Default to regions.
+      if (stage.context.region) {
+        p.locations = [Location.region(stage.context.region)]
+      } else if (stage.context.regions) {
         p.locations = stage.context.regions.collect { String r -> Location.region(r) }
+      } else if (stage.context.namespace) {
+        p.locations = [Location.namespace(stage.context.namespace)]
+      } else if (stage.context.namespaces) {
+        p.locations = stage.context.namespaces.collect { String n -> Location.namespace(n) }
+      } else if (stage.context.cloudProvider == "gce" && stage.context.zones) {
+        p.locations = stage.context.zones.collect { String z -> Location.zone(z) }
+      } else {
+        p.locations = []
       }
       p
     }

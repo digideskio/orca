@@ -49,9 +49,10 @@ class PackageInfo {
     // copy the context since we may modify it in createAugmentedRequest
     requestMap.putAll(stage.execution.context)
     requestMap.putAll(stage.context)
+
     if (stage.execution instanceof Pipeline) {
       Map trigger = ((Pipeline) stage.execution).trigger
-      Map buildInfo = [:]
+      Map buildInfo = null
       if (requestMap.buildInfo) { // package was built as part of the pipeline
         buildInfo = mapper.convertValue(requestMap.buildInfo, Map)
       }
@@ -72,68 +73,105 @@ class PackageInfo {
   @CompileDynamic
   @VisibleForTesting
   private Map createAugmentedRequest(Map trigger, Map buildInfo, Map request) {
-    List<Map> triggerArtifacts = trigger.buildInfo?.artifacts ?: trigger.parentExecution?.trigger?.buildInfo?.artifacts
-    List<Map> buildArtifacts = buildInfo.artifacts
-    if ((!triggerArtifacts && !buildArtifacts) || isUrl(request.package)) {
+
+    List<Map> triggerArtifacts = trigger?.buildInfo?.artifacts ?: trigger?.parentExecution?.trigger?.buildInfo?.artifacts
+    List<Map> buildArtifacts = buildInfo?.artifacts
+
+    if (isUrl(request.package)) {
       return request
     }
 
-    String prefix = "${request.package}${versionDelimiter}"
+    if (!buildInfo || (buildInfo && !buildArtifacts)) {
+      if (!triggerArtifacts && (trigger.buildInfo != null || trigger.parentExecution?.trigger?.buildInfo != null)) {
+        throw new IllegalStateException("Jenkins job detected but no artifacts found, please archive the packages in your job and try again.")
+      }
+    }
+
+    if (!buildArtifacts && !triggerArtifacts) {
+      return request
+    }
+
+    List missingPrefixes = []
     String fileExtension = ".${packageType}"
 
-    Map triggerArtifact = filterArtifacts(triggerArtifacts, prefix, fileExtension)
-    Map buildArtifact = filterArtifacts(buildArtifacts, prefix, fileExtension)
+    // There might not be a request.package so we look for the package name from either the buildInfo or trigger
+    //
+    String reqPkg = request.package ?:
+                    buildArtifacts?.first()?.fileName?.split(versionDelimiter)?.first() ?:
+                      triggerArtifacts?.first()?.fileName?.split(versionDelimiter)?.first()
 
-    // only one unique package per pipeline is allowed
-    if (triggerArtifact && buildArtifact && triggerArtifact.fileName != buildArtifact.fileName) {
-      throw new IllegalStateException("Found build artifact in Jenkins stage and Pipeline Trigger")
-    }
+    List<String> requestPackages = reqPkg.split(" ")
 
-    String packageName
-    String packageVersion
+    requestPackages.eachWithIndex { requestPackage, index ->
 
-    if (triggerArtifact) {
-      packageName = extractPackageName(triggerArtifact, fileExtension)
-      if(extractVersion) {
-        packageVersion = extractPackageVersion(triggerArtifact, prefix, fileExtension)
+      String prefix = "${requestPackage}${versionDelimiter}"
+
+      Map triggerArtifact = filterArtifacts(triggerArtifacts, prefix, fileExtension)
+      Map buildArtifact = filterArtifacts(buildArtifacts, prefix, fileExtension)
+
+      // only one unique package per pipeline is allowed
+      if (triggerArtifact && buildArtifact && triggerArtifact.fileName != buildArtifact.fileName) {
+        throw new IllegalStateException("Found build artifact in Jenkins stage and Pipeline Trigger")
       }
-    }
 
-    if (buildArtifact) {
-      packageName = extractPackageName(buildArtifact, fileExtension)
-      if (extractVersion) {
-        packageVersion = extractPackageVersion(buildArtifact, prefix, fileExtension)
-      }
-    }
+      String packageName
+      String packageVersion
 
-    if(packageVersion) {
-      request.put('packageVersion', packageVersion)
-    }
-
-    if (packageName) {
-      request.put('package', packageName)
-
-      if (extractBuildDetails) {
-        def buildInfoUrl = buildArtifact ? buildInfo?.url : trigger?.buildInfo?.url
-        def buildInfoUrlParts = parseBuildInfoUrl(buildInfoUrl)
-
-        if (buildInfoUrlParts?.size == 3) {
-          request.put('buildHost', buildInfoUrlParts[0].toString())
-          request.put('job', buildInfoUrlParts[1].toString())
-          request.put('buildNumber', buildInfoUrlParts[2].toString())
-        }
-
-        def commitHash = buildArtifact ? extractCommitHash(buildInfo) : extractCommitHash(trigger?.buildInfo)
-
-        if (commitHash) {
-          request.put('commitHash', commitHash)
+      if (triggerArtifact) {
+        packageName = extractPackageName(triggerArtifact, fileExtension)
+        if (extractVersion) {
+          packageVersion = extractPackageVersion(triggerArtifact, prefix, fileExtension)
         }
       }
 
-      return request
+      if (buildArtifact) {
+        packageName = extractPackageName(buildArtifact, fileExtension)
+        if (extractVersion) {
+          packageVersion = extractPackageVersion(buildArtifact, prefix, fileExtension)
+        }
+      }
+
+      if (packageVersion) {
+        request.put('packageVersion', packageVersion)
+      }
+
+      if (!triggerArtifact && !buildArtifact) {
+        missingPrefixes.add(prefix)
+      }
+
+      // When a package match one of the packages coming from the trigger or from the previous stage its name
+      // get replaced with the actual package name. Otherwise its just passed down to the bakery,
+      // letting the bakery to resolve it.
+      requestPackages[index] = packageName ?: requestPackage
+
+      if (packageName) {
+
+        if (extractBuildDetails) {
+          def buildInfoUrl = buildArtifact ? buildInfo?.url : trigger?.buildInfo?.url
+          def buildInfoUrlParts = parseBuildInfoUrl(buildInfoUrl)
+
+          if (buildInfoUrlParts?.size == 3) {
+            request.put('buildHost', buildInfoUrlParts[0].toString())
+            request.put('job', buildInfoUrlParts[1].toString())
+            request.put('buildNumber', buildInfoUrlParts[2].toString())
+          }
+
+          def commitHash = buildArtifact ? extractCommitHash(buildInfo) : extractCommitHash(trigger?.buildInfo)
+
+          if (commitHash) {
+            request.put('commitHash', commitHash)
+          }
+        }
+      }
     }
 
-    throw new IllegalStateException("Unable to find deployable artifact starting with ${prefix} and ending with ${fileExtension} in ${buildArtifacts} and ${triggerArtifacts}. Make sure your deb package file name complies with the naming convention: name_version-release_arch.")
+    // If it hasn't been possible to match a package and allowMissingPackageInstallation is false raise an exception.
+    if (missingPrefixes && !request.allowMissingPackageInstallation) {
+      throw new IllegalStateException("Unable to find deployable artifact starting with ${missingPrefixes} and ending with ${fileExtension} in ${buildArtifacts} and ${triggerArtifacts}. Make sure your deb package file name complies with the naming convention: name_version-release_arch.")
+    }
+
+    request.put('package', requestPackages.join(" "))
+    return request
   }
 
   @CompileDynamic
@@ -163,8 +201,8 @@ class PackageInfo {
   @CompileDynamic
   private String extractPackageVersion(Map artifact, String filePrefix, String fileExtension) {
     String version = artifact.fileName.substring(artifact.fileName.indexOf(filePrefix) + filePrefix.length(), artifact.fileName.lastIndexOf(fileExtension))
-    if(version.contains(versionDelimiter)) { // further strip in case of _all is in the file name
-      version = version.substring(0,version.indexOf(versionDelimiter))
+    if (version.contains(versionDelimiter)) { // further strip in case of _all is in the file name
+      version = version.substring(0, version.indexOf(versionDelimiter))
     }
     return version
   }

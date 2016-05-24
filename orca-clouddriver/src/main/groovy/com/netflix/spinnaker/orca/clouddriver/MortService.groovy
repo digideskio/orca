@@ -49,16 +49,13 @@ interface MortService {
   List<SearchResult> getSearchResults(@Query("q") String searchTerm,
                                       @Query("type") String type)
 
-  /**
-   * @deprecated Use "/cache/{cloudProvider}/{type}" instead
-   */
-  @POST("/cache/{type}")
-  Response forceCacheUpdate(@Path("type") String type, @Body Map<String, ? extends Object> data)
-
   @POST("/cache/{cloudProvider}/{type}")
   Response forceCacheUpdate(@Path("cloudProvider") String cloudProvider,
                             @Path("type") String type,
                             @Body Map<String, ? extends Object> data)
+
+  @GET("/credentials/{account}")
+  Map getAccountDetails(@Path("account") String account)
 
   static class SearchResult {
     int totalMatches

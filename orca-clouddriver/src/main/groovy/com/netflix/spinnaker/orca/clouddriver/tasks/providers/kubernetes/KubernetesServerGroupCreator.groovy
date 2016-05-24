@@ -32,8 +32,15 @@ class KubernetesServerGroupCreator implements ServerGroupCreator {
   List<Map> getOperations(Stage stage) {
     def operation = [:]
 
-    operation.putAll(stage.context)
+    // If this stage was synthesized by a parallel deploy stage, the operation properties will be under 'cluster'.
+    if (stage.context.containsKey("cluster")) {
+      operation.putAll(stage.context.cluster as Map)
+    } else {
+      operation.putAll(stage.context)
+    }
 
-    return [[(ServerGroupCreator.OPERATION): operation]]
+    KubernetesContainerFinder.populateFromStage(operation, stage)
+
+    return [[(OPERATION): operation]]
   }
 }

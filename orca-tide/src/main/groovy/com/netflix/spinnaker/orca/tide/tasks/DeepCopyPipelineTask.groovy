@@ -35,12 +35,17 @@ class DeepCopyPipelineTask implements Task {
   TaskResult execute(Stage stage) {
     Map<String, String> source = stage.context.source
     Map<String, String> target = stage.context.target
-    def dryRun = stage.context.dryRun ?: false
+
+    def settings = stage.mapTo(DeepCopySettings)
+
     Map pipelineVpcMigrateDefinition = [
         sourceVpcName: source.vpcName,
-        targetVpcName: target.vpcName
+        targetVpcName: target.vpcName,
+        accountMapping: stage.context.accountMapping ?: [:]
     ]
-    def taskId = tideService.deepCopyPipeline(source.pipelineId, dryRun, pipelineVpcMigrateDefinition)
+    def taskId = tideService.deepCopyPipeline(source.pipelineId, settings.allowIngressFromClassic, settings.dryRun,
+      target.subnetType,
+      pipelineVpcMigrateDefinition)
 
     def outputs = [
         "tide.task.id": taskId
@@ -48,5 +53,10 @@ class DeepCopyPipelineTask implements Task {
 
     return new DefaultTaskResult(ExecutionStatus.SUCCEEDED, outputs)
 
+  }
+
+  static class DeepCopySettings {
+    boolean dryRun = false
+    boolean allowIngressFromClassic = true
   }
 }

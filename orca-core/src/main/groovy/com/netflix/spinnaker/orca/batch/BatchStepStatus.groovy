@@ -37,7 +37,6 @@ class BatchStepStatus {
         return new BatchStepStatus(RepeatStatus.FINISHED, result.status.exitStatus, BatchStatus.COMPLETED)
       case ExecutionStatus.SUSPENDED:
         return new BatchStepStatus(RepeatStatus.FINISHED, result.status.exitStatus, BatchStatus.STOPPED)
-      case ExecutionStatus.FAILED:
       case ExecutionStatus.TERMINAL:
         return new BatchStepStatus(RepeatStatus.FINISHED, result.status.exitStatus, BatchStatus.FAILED)
       case ExecutionStatus.RUNNING:
@@ -48,6 +47,8 @@ class BatchStepStatus {
       case ExecutionStatus.REDIRECT:
         return new BatchStepStatus(RepeatStatus.FINISHED, result.status.exitStatus, BatchStatus.COMPLETED)
       case ExecutionStatus.STOPPED:
+        return new BatchStepStatus(RepeatStatus.FINISHED, result.status.exitStatus, BatchStatus.COMPLETED)
+      case ExecutionStatus.FAILED_CONTINUE:
         return new BatchStepStatus(RepeatStatus.FINISHED, result.status.exitStatus, BatchStatus.COMPLETED)
     }
   }

@@ -34,13 +34,17 @@ interface TideService {
       @Path("account") String account,
       @Path("region") String region,
       @Path("name") String name,
+      @Query("allowIngressFromClassic") Boolean allowIngressFromClassic,
+      @Query("subnetType") String subnetType,
       @Query("dryRun") Boolean dryRun,
       @Body Map target)
 
   @POST("/resource/pipeline/{id}/deepCopy")
   String deepCopyPipeline(
       @Path("id") String pipelineId,
+      @Query("allowIngressFromClassic") Boolean allowIngressFromClassic,
       @Query("dryRun") Boolean dryRun,
+      @Query("subnetType") String subnetType,
       @Body Map pipelineVpcMigrateDefinition
   )
 }

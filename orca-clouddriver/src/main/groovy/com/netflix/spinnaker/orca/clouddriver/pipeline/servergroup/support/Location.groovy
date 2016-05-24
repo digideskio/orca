@@ -25,13 +25,14 @@ import groovy.transform.ToString
 class Location {
   enum Type {
     REGION,
+    NAMESPACE,
     ZONE
   }
   Type type
   String value
 
   /**
-   * @return The all lowercase, plural form of this location type ("regions" or "zones")
+   * @return The all lowercase, plural form of this location type ("regions", "zones" or "namespaces")
    */
   @JsonIgnore
   String pluralType() {
@@ -39,7 +40,7 @@ class Location {
   }
 
   /**
-   * @return The all lowercase, singular form of this location type ("region" or "zone")
+   * @return The all lowercase, singular form of this location type ("region", "zone" or "namespace")
    */
   @JsonIgnore
   String singularType() {
@@ -52,5 +53,9 @@ class Location {
 
   static Location region(String value) {
     return new Location(type: Location.Type.REGION, value: value)
+  }
+
+  static Location namespace(String value) {
+    return new Location(type: Location.Type.NAMESPACE, value: value)
   }
 }

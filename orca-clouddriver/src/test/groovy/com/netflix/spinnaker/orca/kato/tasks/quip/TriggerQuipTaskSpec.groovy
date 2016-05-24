@@ -23,6 +23,7 @@ import com.netflix.spinnaker.orca.clouddriver.InstanceService
 import com.netflix.spinnaker.orca.pipeline.model.Pipeline
 import com.netflix.spinnaker.orca.pipeline.model.PipelineStage
 import retrofit.RetrofitError
+import retrofit.client.Client
 import retrofit.client.Response
 import retrofit.mime.TypedString
 import spock.lang.Shared
@@ -37,6 +38,7 @@ class TriggerQuipTaskSpec extends Specification {
 
   def setup() {
     task.objectMapper = new ObjectMapper()
+    task.retrofitClient = Stub(Client)
   }
 
   @Shared
@@ -75,7 +77,7 @@ class TriggerQuipTaskSpec extends Specification {
     TaskResult result = task.execute(stage)
 
     then:
-    instances.size() * instanceService.patchInstance(app, "1.2") >>> response
+    instances.size() * instanceService.patchInstance(app, "1.2", "") >>> response
     result.stageOutputs.taskIds == dnsTaskMap
     result.status == ExecutionStatus.SUCCEEDED
 
@@ -116,9 +118,11 @@ class TriggerQuipTaskSpec extends Specification {
     then:
     throwException.each { // need to do this since I can't stick exceptions on the data table
       if(it) {
-        1 * instanceService.patchInstance(app, patchVersion) >> {throw new RetrofitError(null, null, null, null, null, null, null)}
+        1 * instanceService.patchInstance(app, patchVersion, "") >> {
+          throw new RetrofitError(null, null, null, null, null, null, null)
+        }
       } else {
-        1 * instanceService.patchInstance(app, patchVersion) >> instanceResponse
+        1 * instanceService.patchInstance(app, patchVersion, "") >> instanceResponse
       }
     }
 
@@ -159,7 +163,7 @@ class TriggerQuipTaskSpec extends Specification {
 
     then:
     0 * task.createInstanceService(_)
-    0 * instanceService.patchInstance(app, patchVersion)
+    0 * instanceService.patchInstance(app, patchVersion, "")
     thrown(RuntimeException)
 
     where:

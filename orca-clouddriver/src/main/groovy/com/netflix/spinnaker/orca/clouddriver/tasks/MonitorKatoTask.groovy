@@ -56,8 +56,16 @@ class MonitorKatoTask implements RetryableTask {
     }
 
     Map<String, ? extends Object> outputs = [:]
-    if (status == ExecutionStatus.SUCCEEDED && !stage.context.containsKey("deploy.server.groups")) {
-      outputs["deploy.server.groups"] = getServerGroupNames(katoTask)
+    if (status == ExecutionStatus.SUCCEEDED) {
+      def deployed = getDeployedNames(katoTask)
+      // The below two checks aren't mutually exclusive since both `deploy.server.groups` and `deploy.jobs` can initially
+      // by empty, although only one of them needs to be filled.
+      if (!stage.context.containsKey("deploy.server.groups")) {
+        outputs["deploy.server.groups"] = getServerGroupNames(katoTask)
+      }
+      if (!stage.context.containsKey("deploy.jobs") && deployed) {
+        outputs["deploy.jobs"] = deployed
+      }
     }
     if (status == ExecutionStatus.SUCCEEDED || status == ExecutionStatus.TERMINAL) {
       List<Map<String, Object>> katoTasks = []
@@ -96,8 +104,11 @@ class MonitorKatoTask implements RetryableTask {
     }
   }
 
-  // This is crappy logic
-  // TODO clean this up in Kato
+  /**
+   * @param The task being inspected for region/server group mappings.
+   * @return Server group names keyed by region.
+   * @deprecate In favor of getDeployedNames(Task task).
+   */
   @CompileStatic(TypeCheckingMode.SKIP)
   private static Map<String, List<String>> getServerGroupNames(Task task) {
     def result = [:]
@@ -126,5 +137,13 @@ class MonitorKatoTask implements RetryableTask {
       }
     }
     result
+  }
+
+  private static Map<String, List<String>> getDeployedNames(Task task) {
+    Map result = task.resultObjects?.find {
+      it?.deployedNamesByLocation
+    } ?: [:]
+
+    return (Map<String, List<String>>) result.deployedNamesByLocation
   }
 }

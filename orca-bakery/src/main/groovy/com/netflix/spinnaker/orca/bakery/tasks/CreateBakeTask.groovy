@@ -86,7 +86,7 @@ class CreateBakeTask implements RetryableTask {
 
       new DefaultTaskResult(ExecutionStatus.SUCCEEDED, stageOutputs)
     } catch (RetrofitError e) {
-      if (e.response?.status == 404) {
+      if (e.response?.status && e.response.status == 404) {
         try {
           def exceptionResult = mapper.readValue(e.response.body.in().text, Map)
           def exceptionMessages = (exceptionResult.messages ?: []) as List<String>
@@ -137,6 +137,13 @@ class CreateBakeTask implements RetryableTask {
 
     if (!propagateCloudProviderType) {
       bakeRequest = bakeRequest.copyWith(cloudProviderType: null)
+    }
+
+    // The allowMissingPackageInstallation only affect Orca behavior. We don't want to propagate it to any bakery.
+    bakeRequest = bakeRequest.copyWith(allowMissingPackageInstallation: null)
+
+    if (!roscoApisEnabled) {
+      bakeRequest = bakeRequest.copyWith(templateFileName: null, extendedAttributes: null)
     }
 
     return bakeRequest

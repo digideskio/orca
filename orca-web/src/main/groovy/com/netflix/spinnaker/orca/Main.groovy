@@ -15,8 +15,11 @@
  */
 
 package com.netflix.spinnaker.orca
+
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.netflix.spinnaker.config.ErrorConfiguration
 import com.netflix.spinnaker.config.TomcatConfiguration
+import com.netflix.spinnaker.kork.PlatformComponents
 import com.netflix.spinnaker.orca.applications.config.ApplicationConfig
 import com.netflix.spinnaker.orca.bakery.config.BakeryConfiguration
 import com.netflix.spinnaker.orca.clouddriver.config.CloudDriverConfiguration
@@ -30,6 +33,7 @@ import com.netflix.spinnaker.orca.eureka.DiscoveryPollingConfiguration
 import com.netflix.spinnaker.orca.flex.config.FlexConfiguration
 import com.netflix.spinnaker.orca.front50.config.Front50Configuration
 import com.netflix.spinnaker.orca.igor.config.IgorConfiguration
+import com.netflix.spinnaker.orca.mahe.config.MaheConfiguration
 import com.netflix.spinnaker.orca.mine.config.MineConfiguration
 import com.netflix.spinnaker.orca.pipeline.model.PipelineStage
 import com.netflix.spinnaker.orca.rush.config.RushConfiguration
@@ -52,7 +56,9 @@ import org.springframework.scheduling.annotation.EnableAsync
 @EnableAutoConfiguration(exclude = [BatchAutoConfiguration, GroovyTemplateAutoConfiguration])
 @EnableBatchProcessing(modular = true)
 @Import([
+  PlatformComponents,
   WebConfiguration,
+  ErrorConfiguration,
   OrcaConfiguration,
   OrcaPersistenceConfiguration,
   RedisConfiguration,
@@ -67,6 +73,7 @@ import org.springframework.scheduling.annotation.EnableAsync
   DiscoveryPollingConfiguration,
   TomcatConfiguration,
   MineConfiguration,
+  MaheConfiguration,
   TideConfiguration,
   ApplicationConfig
 ])

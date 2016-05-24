@@ -54,7 +54,8 @@ class PipelineStarter extends ExecutionStarter<Pipeline> {
       .withAppConfig((Map<String, Serializable>) config.appConfig)
       .withParallel(config.parallel as Boolean)
       .withLimitConcurrent(config.limitConcurrent as Boolean)
-      .withExecutingInstance(currentInstance)
+      .withKeepWaitingPipelines(config.keepWaitingPipelines as Boolean)
+      .withExecutingInstance(currentInstanceId)
       .withNotifications((List<Map<String, Object>>) config.notifications)
       .build()
   }

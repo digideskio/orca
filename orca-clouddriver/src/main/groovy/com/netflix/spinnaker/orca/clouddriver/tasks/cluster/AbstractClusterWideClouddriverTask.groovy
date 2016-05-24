@@ -16,6 +16,8 @@
 
 package com.netflix.spinnaker.orca.clouddriver.tasks.cluster
 
+import groovy.transform.Canonical
+import groovy.util.logging.Slf4j
 import com.netflix.frigga.Names
 import com.netflix.spinnaker.orca.DefaultTaskResult
 import com.netflix.spinnaker.orca.ExecutionStatus
@@ -32,8 +34,6 @@ import com.netflix.spinnaker.orca.clouddriver.utils.OortHelper
 import com.netflix.spinnaker.orca.kato.pipeline.CopyLastAsgStage
 import com.netflix.spinnaker.orca.kato.pipeline.DeployStage
 import com.netflix.spinnaker.orca.pipeline.model.Stage
-import groovy.transform.Canonical
-import groovy.util.logging.Slf4j
 import org.springframework.beans.factory.annotation.Autowired
 
 /**
@@ -92,23 +92,37 @@ abstract class AbstractClusterWideClouddriverTask extends AbstractCloudProviderA
                                                   clusterSelection.cluster,
                                                   clusterSelection.cloudProvider)
     if (!cluster.isPresent()) {
+      if (stage.context.continueIfClusterNotFound) {
+        return DefaultTaskResult.SUCCEEDED;
+      }
       return missingClusterResult(stage, clusterSelection)
     }
 
     List<Map> serverGroups = cluster.get().serverGroups
 
     if (!serverGroups) {
+      if (stage.context.continueIfClusterNotFound) {
+        return DefaultTaskResult.SUCCEEDED;
+      }
       return emptyClusterResult(stage, clusterSelection, cluster.get())
     }
 
-    Map<Location, List<TargetServerGroup>> targetServerGroupsByLocation = serverGroups.collect {
-      new TargetServerGroup(serverGroup: it)
-    }.groupBy { it.getLocation() }
+    def locations =
+      stage.context.regions
+      ? stage.context.regions.collect { new Location(type: Location.Type.REGION, value: it) }
+      : stage.context.zones
+        ? stage.context.zones.collect { new Location(type: Location.Type.ZONE, value: it) }
+        : stage.context.region
+          ? [new Location(type: Location.Type.REGION, value: stage.context.region)]
+          : []
 
-    def locations = stage.context.regions ?: stage.context.zones ?: []
-    List<TargetServerGroup> filteredServerGroups = locations.collect {
-      TargetServerGroup.Support.locationFromCloudProviderValue(clusterSelection.cloudProvider, it)
-    }.findResults { Location l ->
+    Location.Type exactLocationType = locations?.getAt(0)?.type
+
+    Map<Location, List<TargetServerGroup>> targetServerGroupsByLocation = serverGroups.collect {
+      new TargetServerGroup(it)
+    }.groupBy { it.getLocation(exactLocationType) }
+
+    List<TargetServerGroup> filteredServerGroups = locations.findResults { Location l ->
       def tsgs = targetServerGroupsByLocation[l]
       if (!tsgs) {
         return null
@@ -169,7 +183,7 @@ abstract class AbstractClusterWideClouddriverTask extends AbstractCloudProviderA
       return []
     }
 
-    if (!serverGroups.every { it.getLocation() == location }) {
+    if (!serverGroups.every { it.getLocation(location.type) == location }) {
       throw new IllegalStateException("all server groups must be in the same location, found ${serverGroups*.getLocation()}")
     }
 
@@ -198,12 +212,12 @@ abstract class AbstractClusterWideClouddriverTask extends AbstractCloudProviderA
       switch (location.type) {
         case Location.Type.ZONE:
           deployedServerGroups.addAll(clusterServerGroups.findAll {
-            it.zones.contains(location.value) && dsgs[it.region].contains(it.name)
+            it.zones.contains(location.value) && dsgs[it.region]?.contains(it.name)
           })
           break;
         case Location.Type.REGION:
           deployedServerGroups.addAll(clusterServerGroups.findAll {
-            it.region == location.value && dsgs[location.value].contains(it.name)
+            it.region == location.value && dsgs[location.value]?.contains(it.name)
           })
           break;
       }

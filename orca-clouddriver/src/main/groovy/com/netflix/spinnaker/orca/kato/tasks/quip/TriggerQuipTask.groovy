@@ -1,5 +1,6 @@
 package com.netflix.spinnaker.orca.kato.tasks.quip
 
+import groovy.util.logging.Slf4j
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.netflix.spinnaker.orca.DefaultTaskResult
 import com.netflix.spinnaker.orca.ExecutionStatus
@@ -9,10 +10,14 @@ import com.netflix.spinnaker.orca.pipeline.model.Stage
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Component
 import retrofit.RetrofitError
+import retrofit.client.Client
 
 @Component
-class TriggerQuipTask extends AbstractQuipTask implements RetryableTask  {
+@Slf4j
+class TriggerQuipTask extends AbstractQuipTask implements RetryableTask {
   @Autowired ObjectMapper objectMapper
+
+  @Autowired Client retrofitClient
 
   long backoffPeriod = 10000
   long timeout = 60000 // 1min
@@ -27,17 +32,18 @@ class TriggerQuipTask extends AbstractQuipTask implements RetryableTask  {
     String packageName = stage.context?.package
     String version = stage.context.version
     // verify instance list, package, and version are in the context
-    if(version && packageName && instances) {
+    if (version && packageName && instances) {
       // trigger patch on target server
       instances.each { String key, Map valueMap ->
         String hostName = valueMap.hostName
         def instanceService = createInstanceService("http://${hostName}:5050")
 
         try {
-          def instanceResponse = instanceService.patchInstance(packageName, version)
+          def instanceResponse = instanceService.patchInstance(packageName, version, "")
           def ref = objectMapper.readValue(instanceResponse.body.in().text, Map).ref
-          taskIdMap.put(hostName, ref.substring(1+ref.lastIndexOf('/')))
-        } catch(RetrofitError e) {
+          taskIdMap.put(hostName, ref.substring(1 + ref.lastIndexOf('/')))
+        } catch (RetrofitError e) {
+          log.warn("Error in Quip request: {}", e.message)
           executionStatus = ExecutionStatus.RUNNING
         }
       }

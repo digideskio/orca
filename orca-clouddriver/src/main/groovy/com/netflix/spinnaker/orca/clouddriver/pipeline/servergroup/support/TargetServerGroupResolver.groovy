@@ -16,10 +16,10 @@
 
 package com.netflix.spinnaker.orca.clouddriver.pipeline.servergroup.support
 
+import groovy.util.logging.Slf4j
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.netflix.spinnaker.orca.clouddriver.OortService
 import com.netflix.spinnaker.orca.pipeline.model.Stage
-import groovy.util.logging.Slf4j
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Component
 import retrofit.RetrofitError
@@ -50,10 +50,10 @@ class TargetServerGroupResolver {
     return params.locations.collect { Location location ->
       if (params.target) {
         return resolveByTarget(params, location)
-      } else if (params.asgName) {
-        return resolveByAsgName(params, location)
+      } else if (params.serverGroupName) {
+        return resolveByServerGroupName(params, location)
       }
-      throw new TargetServerGroup.NotFoundException("TargetServerGroup.Params must have either target or asgName")
+      throw new TargetServerGroup.NotFoundException("TargetServerGroup.Params must have either target or serverGroupName")
     }
   }
 
@@ -69,24 +69,24 @@ class TargetServerGroupResolver {
     if (!tsgMap) {
       throw new TargetServerGroup.NotFoundException("Unable to locate ${params.target.name()} in $params.credentials/$location.value/$params.cluster")
     }
-    return new TargetServerGroup(serverGroup: tsgMap)
+    return new TargetServerGroup(tsgMap)
   }
 
-  private TargetServerGroup resolveByAsgName(TargetServerGroup.Params params, Location location) {
+  private TargetServerGroup resolveByServerGroupName(TargetServerGroup.Params params, Location location) {
     List<Map> tsgList = fetchWithRetries(List) {
       oortService.getServerGroup(params.app,
         params.credentials,
         params.cluster,
-        params.asgName,
+        params.serverGroupName,
         null /* region */, // TODO(ttomsu): Add zonal support to this op.
         params.cloudProvider)
     }
     // Without zonal support in the getServerGroup call above, we have to do the filtering here.
-    def tsg = tsgList?.find { Map tsg -> tsg.region == location.value || tsg.zones.contains(location.value) }
+    def tsg = tsgList?.find { Map tsg -> tsg.region == location.value || tsg.zones?.contains(location.value) || tsg.namespace == location.value }
     if (!tsg) {
-      throw new TargetServerGroup.NotFoundException("Unable to locate $params.asgName in $params.credentials/$location.value/$params.cluster")
+      throw new TargetServerGroup.NotFoundException("Unable to locate $params.serverGroupName in $params.credentials/$location.value/$params.cluster")
     }
-    return new TargetServerGroup(serverGroup: tsg)
+    return new TargetServerGroup(tsg)
   }
 
   /**
@@ -105,21 +105,30 @@ class TargetServerGroupResolver {
       throw new TargetServerGroup.NotFoundException("No TargetServerGroups found for stage ${stage}")
     }
     List<TargetServerGroup> tsgs = dtsgStage.context.targetReferences.collect {
-      return new TargetServerGroup(serverGroup: it)
+      return new TargetServerGroup(it)
     }
     if (!tsgs) {
       throw new TargetServerGroup.NotFoundException("No targetReferences found on DetermineTargetServerGroup stage " +
         "${stage}")
     }
 
-    def tsg = tsgs.find {
-      (stage.context.regions && stage.context.regions.contains(it.getLocation().value)) ||
-        (stage.context.zones && stage.context.zones.contains(it.getLocation().value))
-    }
+    // TODO(duftler): Confirm that every stage.context will have a targetLocation at this point, and then drop the else branch.
+    def targetLocation = stage.context.targetLocation
+    def tsg =
+      targetLocation
+      ? tsgs.find {
+          def candidateLocation = it.getLocation(targetLocation.type as Location.Type)
+          return candidateLocation.value == targetLocation.value
+        }
+      : tsgs.find {
+          def location = it.getLocation().value
+          return (stage.context.region == location) || (stage.context.zone == location) || (stage.context.namespace == location)
+        }
     if (!tsg) {
       def locations = []
-      stage.context.regions && locations << stage.context.regions
-      stage.context.zones && locations << stage.context.zones
+      stage.context.region && locations << stage.context.region
+      stage.context.zone && locations << stage.context.zone
+      stage.context.namespace && locations << stage.context.namespace
       throw new TargetServerGroup.NotFoundException("No targets found on matching any location in ${locations} in " +
         "target server groups: ${tsgs}")
     }

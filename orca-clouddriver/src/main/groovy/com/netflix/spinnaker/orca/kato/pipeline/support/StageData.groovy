@@ -23,6 +23,7 @@ class StageData {
   String account
   String credentials
   String region
+  String namespace
   String freeFormDetails
   String application
   String stack
@@ -56,6 +57,14 @@ class StageData {
 
   String getRegion() {
     region ?: availabilityZones?.keySet()?.getAt(0)
+  }
+
+  Boolean getUseSourceCapacity() {
+    if (source?.useSourceCapacity != null) {
+      return source.useSourceCapacity
+    }
+
+    return useSourceCapacity ?: false
   }
 
   static class Source {

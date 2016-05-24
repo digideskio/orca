@@ -16,6 +16,9 @@
 
 package com.netflix.spinnaker.orca.clouddriver.tasks.cluster
 
+import groovy.transform.Canonical
+import groovy.transform.ToString
+import groovy.util.logging.Slf4j
 import com.netflix.frigga.Names
 import com.netflix.spinnaker.orca.DefaultTaskResult
 import com.netflix.spinnaker.orca.ExecutionStatus
@@ -25,9 +28,9 @@ import com.netflix.spinnaker.orca.clouddriver.pipeline.servergroup.support.Targe
 import com.netflix.spinnaker.orca.clouddriver.tasks.AbstractCloudProviderAwareTask
 import com.netflix.spinnaker.orca.clouddriver.utils.OortHelper
 import com.netflix.spinnaker.orca.pipeline.model.Stage
-import groovy.transform.Canonical
 import org.springframework.beans.factory.annotation.Autowired
 
+@Slf4j
 abstract class AbstractWaitForClusterWideClouddriverTask extends AbstractCloudProviderAwareTask implements RetryableTask {
   @Override
   public long getBackoffPeriod() { 10000 }
@@ -52,19 +55,25 @@ abstract class AbstractWaitForClusterWideClouddriverTask extends AbstractCloudPr
   boolean isServerGroupOperationInProgress(List<TargetServerGroup> currentServerGroups,
                                            List<Map> interestingHealthProviderNames,
                                            DeployServerGroup deployServerGroup) {
-    isServerGroupOperationInProgress(interestingHealthProviderNames,
-                                     Optional.ofNullable(currentServerGroups.find {
-                                       // Possible issue here for GCE if multiple server groups are named the same in
-                                       // different zones but with the same region. However, this is not allowable by
-                                       // Spinnaker constraints, so we're accepting the risk.
-                                       it.region == deployServerGroup.region && it.name == deployServerGroup.name
-                                     }))
+    def matchingServerGroups = Optional.ofNullable(currentServerGroups.find {
+      // Possible issue here for GCE if multiple server groups are named the same in
+      // different zones but with the same region. However, this is not allowable by
+      // Spinnaker constraints, so we're accepting the risk.
+      log.info "currentServerGroup.region: $it.region, currentServerGroup.name: $it.name"
+      log.info " deployServerGroup.region: $it.region,  deployServerGroup.name: $it.name"
+      def isMatch = it.region == deployServerGroup.region && it.name == deployServerGroup.name
+      log.info "is match? $isMatch"
+      isMatch
+    })
+    log.info "Server groups matching $deployServerGroup : $matchingServerGroups"
+    isServerGroupOperationInProgress(interestingHealthProviderNames, matchingServerGroups)
   }
 
   abstract boolean isServerGroupOperationInProgress(List<Map> interestingHealthProviderNames,
                                                     Optional<TargetServerGroup> serverGroup)
 
   @Canonical
+  @ToString(includeNames = true, includePackage = false)
   static class DeployServerGroup {
     String region
     String name
@@ -76,7 +85,6 @@ abstract class AbstractWaitForClusterWideClouddriverTask extends AbstractCloudPr
 
   @Override
   TaskResult execute(Stage stage) {
-
     def clusterSelection = stage.mapTo(AbstractClusterWideClouddriverTask.ClusterSelection)
 
     List<DeployServerGroup> remainingDeployServerGroups = stage.mapTo(RemainingDeployServerGroups).remainingDeployServerGroups
@@ -99,7 +107,9 @@ abstract class AbstractWaitForClusterWideClouddriverTask extends AbstractCloudPr
       return missingClusterResult(stage, clusterSelection)
     }
 
-    def serverGroups = cluster.get().serverGroups.collect { new TargetServerGroup(serverGroup: it) }
+    def serverGroups = cluster.get().serverGroups.collect { new TargetServerGroup(it) }
+    log.info "Pipeline ${stage.execution?.id} found server groups ${serverGroups.collect { it.region + "->" + it.name }}"
+    log.info "Pipeline ${stage.execution?.id} is looking for ${remainingDeployServerGroups.collect { it.region + "->" + it.name }}"
 
     if (!serverGroups) {
       return emptyClusterResult(stage, clusterSelection, cluster.get())
@@ -109,9 +119,11 @@ abstract class AbstractWaitForClusterWideClouddriverTask extends AbstractCloudPr
     List<DeployServerGroup> stillRemaining = remainingDeployServerGroups.findAll(this.&isServerGroupOperationInProgress.curry(serverGroups, healthProviderTypesToCheck))
 
     if (stillRemaining) {
+      log.info "Pipeline ${stage.execution?.id} still has ${stillRemaining.collect { it.region + "->" + it.name }}"
       return new DefaultTaskResult(ExecutionStatus.RUNNING, [remainingDeployServerGroups: stillRemaining])
     }
 
+    log.info "Pipeline ${stage.execution?.id} no server groups remain"
     return DefaultTaskResult.SUCCEEDED
   }
 }

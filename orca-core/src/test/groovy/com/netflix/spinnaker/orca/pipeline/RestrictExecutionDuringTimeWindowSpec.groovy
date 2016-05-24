@@ -15,7 +15,6 @@
  */
 
 package com.netflix.spinnaker.orca.pipeline
-import com.netflix.spinnaker.kork.eureka.EurekaComponents
 import com.netflix.spinnaker.orca.Task
 import com.netflix.spinnaker.orca.batch.StageStatusPropagationListener
 import com.netflix.spinnaker.orca.batch.TaskTaskletAdapter
@@ -25,6 +24,7 @@ import com.netflix.spinnaker.orca.config.OrcaConfiguration
 import com.netflix.spinnaker.orca.pipeline.model.Pipeline
 import com.netflix.spinnaker.orca.pipeline.model.PipelineStage
 import com.netflix.spinnaker.orca.pipeline.model.Stage
+import com.netflix.spinnaker.orca.test.TestConfiguration
 import com.netflix.spinnaker.orca.test.redis.EmbeddedRedisConfiguration
 import org.springframework.batch.core.Job
 import org.springframework.batch.core.Step
@@ -43,7 +43,7 @@ import static com.netflix.spinnaker.orca.pipeline.RestrictExecutionDuringTimeWin
 import static com.netflix.spinnaker.orca.pipeline.RestrictExecutionDuringTimeWindow.SuspendExecutionDuringTimeWindowTask.TimeWindow
 
 @Unroll
-@ContextConfiguration(classes = [EmbeddedRedisConfiguration, JesqueConfiguration, EurekaComponents, OrcaConfiguration])
+@ContextConfiguration(classes = [EmbeddedRedisConfiguration, JesqueConfiguration, OrcaConfiguration, TestConfiguration])
 class RestrictExecutionDuringTimeWindowSpec extends AbstractBatchLifecycleSpec {
 
   @Autowired ApplicationContext applicationContext;
@@ -52,8 +52,6 @@ class RestrictExecutionDuringTimeWindowSpec extends AbstractBatchLifecycleSpec {
 
   def setup() {
     System.properties."pollers.stalePipelines.enabled" = "false"
-    TimeZone.'default' = TimeZone.getTimeZone("America/Los_Angeles")
-    System.setProperty("user.timezone", "America/Los_Angeles")
   }
 
   def "pipeline should inject a stage before if current stage context has restrictExecutionDuringWindow set to true"() {
@@ -63,7 +61,9 @@ class RestrictExecutionDuringTimeWindowSpec extends AbstractBatchLifecycleSpec {
 
   void 'stage should be scheduled at #expectedTime when triggered at #scheduledTime with time windows #timeWindows'() {
     when:
-    Date result = SuspendExecutionDuringTimeWindowTask.calculateScheduledTime(scheduledTime, timeWindows)
+    SuspendExecutionDuringTimeWindowTask suspendExecutionDuringTimeWindowTask = new SuspendExecutionDuringTimeWindowTask()
+    suspendExecutionDuringTimeWindowTask.timeZoneId = "America/Los_Angeles"
+    Date result = suspendExecutionDuringTimeWindowTask.calculateScheduledTime(scheduledTime, timeWindows)
 
     then:
     result.equals(expectedTime)
@@ -115,7 +115,9 @@ class RestrictExecutionDuringTimeWindowSpec extends AbstractBatchLifecycleSpec {
 
   void 'stage should be scheduled at #expectedTime when triggered at #scheduledTime with time windows #stage in stage context'() {
     when:
-    Date result = SuspendExecutionDuringTimeWindowTask.getTimeInWindow(stage, scheduledTime)
+    SuspendExecutionDuringTimeWindowTask suspendExecutionDuringTimeWindowTask = new SuspendExecutionDuringTimeWindowTask()
+    suspendExecutionDuringTimeWindowTask.timeZoneId = "America/Los_Angeles"
+    Date result = suspendExecutionDuringTimeWindowTask.getTimeInWindow(stage, scheduledTime)
 
     then:
     result.equals(expectedTime)

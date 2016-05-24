@@ -106,7 +106,7 @@ class OperationsController {
 
     def augmentedContext = [:]
     augmentedContext.put('trigger', pipeline.trigger)
-    def processedPipeline = ContextParameterProcessor.process(pipeline, augmentedContext)
+    def processedPipeline = ContextParameterProcessor.process(pipeline, augmentedContext, false)
 
     startPipeline(processedPipeline)
   }
@@ -126,6 +126,10 @@ class OperationsController {
           trigger.job as String
         )
       }
+    } else if (trigger?.registry && trigger?.repository && trigger?.tag) {
+      trigger.buildInfo = [
+        taggedImages: [[registry: trigger.registry, repository: trigger.repository, tag: trigger.tag]]
+      ]
     }
   }
 

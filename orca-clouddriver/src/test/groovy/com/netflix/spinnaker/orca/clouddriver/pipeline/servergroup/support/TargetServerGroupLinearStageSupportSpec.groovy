@@ -53,8 +53,9 @@ class TargetServerGroupLinearStageSupportSpec extends Specification {
   void "should inject a stage for each extra region when the target is dynamically bound"() {
     given:
     def stage = new PipelineStage(new Pipeline(), "test", [
-        (locationType): ["us-east-1", "us-west-1", "us-west-2", "eu-west-2"],
-        target        : "current_asg_dynamic"
+        (locationType + 's'): ["us-east-1", "us-west-1", "us-west-2", "eu-west-2"],
+        target              : "current_asg_dynamic",
+        cloudProvider       : cloudProvider
     ])
 
     when:
@@ -64,35 +65,35 @@ class TargetServerGroupLinearStageSupportSpec extends Specification {
     stage.beforeStages.size() == 1
     stage.afterStages.size() == 3
     stage.afterStages*.name == ["testSupportStage", "testSupportStage", "testSupportStage"]
-    stage.context[locationType] == ["us-east-1"]
+    stage.context[locationType] == "us-east-1"
     stage.context[oppositeLocationType] == null
     stage.afterStages*.context[locationType].flatten() == ["us-west-1", "us-west-2", "eu-west-2"]
 
     where:
-    locationType | oppositeLocationType
-    "regions"    | "zones"
-    "zones"      | "regions"
+    locationType | oppositeLocationType | cloudProvider
+    "region"     | "zone"               | null
+    "zone"       | "region"             | 'gce'
   }
 
   void "should inject a stage after for each extra target when target is not dynamically bound"() {
     given:
-    def stage = new PipelineStage(new Pipeline(), "test", ['regions':['should', 'be', 'overridden']])
+    def stage = new PipelineStage(new Pipeline(), "test", ['region':'should be overridden'])
 
     when:
     supportStage.composeTargets(stage)
 
     then:
     1 * resolver.resolveByParams(_) >> [
-      new TargetServerGroup(serverGroup: [name: "asg-v001", region: "us-east-1"]),
-      new TargetServerGroup(serverGroup: [name: "asg-v001", region: "us-west-1"]),
-      new TargetServerGroup(serverGroup: [name: "asg-v002", region: "us-west-2"]),
-      new TargetServerGroup(serverGroup: [name: "asg-v003", region: "eu-west-2"]),
+      new TargetServerGroup(name: "asg-v001", region: "us-east-1"),
+      new TargetServerGroup(name: "asg-v001", region: "us-west-1"),
+      new TargetServerGroup(name: "asg-v002", region: "us-west-2"),
+      new TargetServerGroup(name: "asg-v003", region: "eu-west-2"),
     ]
     stage.beforeStages.size() == 0
     stage.afterStages.size() == 3 // one for each region
     stage.afterStages*.name == ["testSupportStage", "testSupportStage", "testSupportStage"]
-    stage.context.regions == ["us-east-1"]
-    stage.afterStages*.context.regions.flatten() == ["us-west-1", "us-west-2", "eu-west-2"]
+    stage.context.region == "us-east-1"
+    stage.afterStages*.context.region.flatten() == ["us-west-1", "us-west-2", "eu-west-2"]
   }
 
   @Unroll
@@ -116,8 +117,8 @@ class TargetServerGroupLinearStageSupportSpec extends Specification {
 
     then:
     (shouldResolve ? 1 : 0) * resolver.resolveByParams(_) >> [
-        new TargetServerGroup(serverGroup: [name: "asg-v001", region: "us-east-1"]),
-        new TargetServerGroup(serverGroup: [name: "asg-v002", region: "us-west-1"]),
+        new TargetServerGroup(name: "asg-v001", region: "us-east-1"),
+        new TargetServerGroup(name: "asg-v002", region: "us-west-1"),
     ]
     stage.beforeStages*.name == beforeNames
     stage.afterStages*.name == ["testPostInjectable", "testPreInjectable", "testSupportStage", "testPostInjectable"]

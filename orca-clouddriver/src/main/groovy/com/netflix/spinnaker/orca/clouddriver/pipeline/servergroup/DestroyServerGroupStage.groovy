@@ -20,15 +20,21 @@ import com.netflix.spinnaker.orca.clouddriver.pipeline.servergroup.support.Targe
 import com.netflix.spinnaker.orca.clouddriver.pipeline.servergroup.support.TargetServerGroupLinearStageSupport
 import com.netflix.spinnaker.orca.clouddriver.tasks.MonitorKatoTask
 import com.netflix.spinnaker.orca.clouddriver.tasks.servergroup.DestroyServerGroupTask
+import com.netflix.spinnaker.orca.clouddriver.tasks.servergroup.DisableServerGroupTask
 import com.netflix.spinnaker.orca.clouddriver.tasks.servergroup.ServerGroupCacheForceRefreshTask
+import com.netflix.spinnaker.orca.clouddriver.tasks.servergroup.WaitForAllInstancesNotUpTask
 import com.netflix.spinnaker.orca.clouddriver.tasks.servergroup.WaitForDestroyedServerGroupTask
 import com.netflix.spinnaker.orca.pipeline.model.Stage
 import org.springframework.batch.core.Step
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Component
 
 @Component
 class DestroyServerGroupStage extends TargetServerGroupLinearStageSupport {
   static final String PIPELINE_CONFIG_TYPE = "destroyServerGroup"
+
+  @Autowired
+  DisableServerGroupStage disableServerGroupStage
 
   DestroyServerGroupStage() {
     super(PIPELINE_CONFIG_TYPE)
@@ -38,12 +44,26 @@ class DestroyServerGroupStage extends TargetServerGroupLinearStageSupport {
   public List<Step> buildSteps(Stage stage) {
     try {
       composeTargets(stage)
-      [
+
+      List steps = []
+
+      //TODO(cfieber) - need to remove this once proper enable / disable has been implemented in Titus.
+      if (!stage.context.cloudProvider || stage.context.cloudProvider != 'titan') {
+        steps += [
+          buildStep(stage, "disableServerGroup", DisableServerGroupTask),
+          buildStep(stage, "monitorServerGroup", MonitorKatoTask),
+          buildStep(stage, "waitForNotUpInstances", WaitForAllInstancesNotUpTask),
+          buildStep(stage, "forceCacheRefresh", ServerGroupCacheForceRefreshTask),
+        ]
+      }
+
+      steps + [
         buildStep(stage, "destroyServerGroup", DestroyServerGroupTask),
         buildStep(stage, "monitorServerGroup", MonitorKatoTask),
         buildStep(stage, "forceCacheRefresh", ServerGroupCacheForceRefreshTask),
         buildStep(stage, "waitForDestroyedServerGroup", WaitForDestroyedServerGroupTask),
       ]
+
     } catch (TargetServerGroup.NotFoundException ignored) {
       [buildStep(stage, "forceCacheRefresh", ServerGroupCacheForceRefreshTask)]
     }

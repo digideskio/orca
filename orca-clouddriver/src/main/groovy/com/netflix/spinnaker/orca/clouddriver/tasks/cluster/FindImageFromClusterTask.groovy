@@ -27,8 +27,10 @@ import com.netflix.spinnaker.orca.clouddriver.OortService
 import com.netflix.spinnaker.orca.clouddriver.pipeline.servergroup.support.Location
 import com.netflix.spinnaker.orca.clouddriver.tasks.AbstractCloudProviderAwareTask
 import com.netflix.spinnaker.orca.pipeline.model.Stage
+import groovy.transform.Canonical
 import groovy.util.logging.Slf4j
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
 import retrofit.RetrofitError
 
@@ -36,11 +38,11 @@ import retrofit.RetrofitError
 @Slf4j
 class FindImageFromClusterTask extends AbstractCloudProviderAwareTask implements RetryableTask {
 
-  static String SUMMARY_TYPE = "Image"
+  static String SUMMARY_TYPE = "Images"
 
-  final long backoffPeriod = 2000
+  final long backoffPeriod = 10000
 
-  final long timeout = 60000
+  final long timeout = 600000
 
   static enum SelectionStrategy {
     /**
@@ -64,86 +66,186 @@ class FindImageFromClusterTask extends AbstractCloudProviderAwareTask implements
     FAIL
   }
 
+  @Value('${findImage.defaultResolveMissingLocations:false}')
+  boolean defaultResolveMissingLocations = false
+
   @Autowired
   OortService oortService
+
   @Autowired
   ObjectMapper objectMapper
+
+  @Canonical
+  static class FindImageConfiguration {
+    String cluster
+    List<String> regions
+    List<String> zones
+    List<String> namespaces
+    Boolean onlyEnabled = true
+    Boolean resolveMissingLocations
+    SelectionStrategy selectionStrategy = SelectionStrategy.NEWEST
+    String imageNamePattern
+
+    String getApplication() {
+      Names.parseName(cluster).app
+    }
+
+    Set<Location> getRequiredLocations() {
+        return regions?.collect { new Location(Location.Type.REGION, it) } ?:
+          zones?.collect { new Location(Location.Type.ZONE, it) } ?:
+            namespaces?.collect { new Location(Location.Type.NAMESPACE, it) } ?:
+              []
+    }
+  }
 
   @Override
   TaskResult execute(Stage stage) {
     String cloudProvider = getCloudProvider(stage)
-    String app = Names.parseName(stage.context.cluster).app
     String account = getCredentials(stage)
-    String cluster = stage.context.cluster
-    Set<Location> requiredLocations = []
-    if (stage.context.regions) {
-      requiredLocations = stage.context.regions.collect({
-        return new Location(type: Location.Type.REGION, value: it)
-      }) as Set
-    } else if (stage.context.zones) {
-      requiredLocations = stage.context.zones.collect({
-        return new Location(type: Location.Type.ZONE, value: it)
-      }) as Set
+    FindImageConfiguration config = stage.mapTo(FindImageConfiguration)
+    if (config.resolveMissingLocations == null) {
+      config.resolveMissingLocations = defaultResolveMissingLocations
     }
 
-    def onlyEnabled = stage.context.onlyEnabled == null ? true : (Boolean.valueOf(stage.context.onlyEnabled.toString()))
-    def selectionStrat = SelectionStrategy.valueOf(stage.context.selectionStrategy?.toString() ?: "NEWEST")
+    List<Location> missingLocations = []
+    List<Location> locationsWithMissingImageIds = []
 
-    Map<Location, Map<String, Object>> imageSummaries = requiredLocations.collectEntries { location ->
+    Set<String> imageNames = []
+    Map<Location, String> imageIds = [:]
+
+    Map<Location, List<Map<String, Object>>> imageSummaries = config.requiredLocations.collectEntries { location ->
       try {
         def lookupResults = oortService.getServerGroupSummary(
-          app,
+          config.application,
           account,
-          cluster,
+          config.cluster,
           cloudProvider,
           location.value,
-          selectionStrat.toString(),
+          config.selectionStrategy.toString(),
           SUMMARY_TYPE,
-          onlyEnabled.toString())
-        return [(location): lookupResults]
+          config.onlyEnabled.toString())
+        List<Map<String, Object>> summaries = (List<Map<String, Object>>) lookupResults.summaries
+        summaries?.forEach {
+          imageNames << (String) it.imageName
+          imageIds[location] = (String) it.imageId
+
+          if (!it.imageId) {
+            locationsWithMissingImageIds << location
+          }
+        }
+        return [(location): summaries]
       } catch (RetrofitError e) {
         if (e.response.status == 404) {
-          def message = "Could not find cluster '$cluster' for '$account' in '$location.value'."
+          final Map reason
           try {
-            Map reason = objectMapper.readValue(e.response.body.in(), new TypeReference<Map<String, Object>>() {})
-            if (reason.error.contains("target.fail.strategy")){
-              message = "Multiple possible server groups present in ${location.value}"
-            }
-          } catch (Exception ignored) {}
-          throw new IllegalStateException(message)
+            reason = objectMapper.readValue(e.response.body.in(), new TypeReference<Map<String, Object>>() {})
+          } catch (Exception ignored) {
+            throw new IllegalStateException("Unexpected response from API")
+          }
+          if (reason.error?.contains("target.fail.strategy")){
+            throw new IllegalStateException("Multiple possible server groups present in ${location.value}")
+          }
+          if (config.resolveMissingLocations) {
+            missingLocations << location
+            return [(location): null]
+          }
+
+          throw new IllegalStateException("Could not find cluster '$config.cluster' for '$account' in '$location.value'.")
         }
         throw e
       }
     }
 
-    List<Map> deploymentDetails = imageSummaries.collect { location, summary ->
-      def result = [
-        ami              : summary.imageId, // TODO(ttomsu): Deprecate and remove this value.
-        imageId          : summary.imageId,
-        imageName        : summary.imageName,
-        sourceServerGroup: summary.serverGroupName
-      ]
-
-      if (location.type == Location.Type.REGION) {
-        result.region = location.value
-      } else if (location.type == Location.Type.ZONE) {
-        result.zone = location.value
-      }
-
-      try {
-        result.putAll(summary.image ?: [:])
-        result.putAll(summary.buildInfo ?: [:])
-      } catch (Exception e) {
-        log.error("Unable to merge server group image/build info (summary: ${summary})", e)
-      }
-
-      return result
+    if (!locationsWithMissingImageIds.isEmpty()) {
+      // signifies that at least one summary was missing image details, let's retry until we see image details
+      log.warn("One or more locations are missing image details (locations: ${locationsWithMissingImageIds*.value}, cluster: ${config.cluster}, account: ${account})")
+      return new DefaultTaskResult(ExecutionStatus.RUNNING)
     }
+
+    if (missingLocations) {
+      Set<String> searchNames = extractBaseImageNames(imageNames)
+      if (searchNames.size() != 1) {
+        throw new IllegalStateException("Request to resolve images for missing ${config.requiredLocations.first().pluralType()} requires exactly one image. (Found ${searchNames})")
+      }
+
+      def deploymentDetailTemplate = imageSummaries.find { k, v -> v != null }.value[0]
+      if (!(deploymentDetailTemplate.image && deploymentDetailTemplate.buildInfo)) {
+        throw new IllegalStateException("Missing image or buildInfo on ${deploymentDetailTemplate}")
+      }
+
+      def mkDeploymentDetail = { String imageName, String imageId ->
+        [
+          imageId        : imageId,
+          imageName      : imageName,
+          serverGroupName: config.cluster,
+          image          : deploymentDetailTemplate.image + [imageId: imageId, name: imageName],
+          buildInfo      : deploymentDetailTemplate.buildInfo
+        ]
+      }
+
+      List<Map> images = oortService.findImage(cloudProvider, searchNames[0] + '*', account, null)
+      for (Map image : images) {
+        for (Location location : missingLocations) {
+          if (imageSummaries[location] == null && image.amis && image.amis[location.value]) {
+            imageSummaries[location] = [
+              mkDeploymentDetail((String) image.imageName, (String) image.amis[location.value][0])
+            ]
+          }
+        }
+      }
+
+      def unresolved = imageSummaries.findResults { it.value == null ? it.key : null }
+      if (unresolved) {
+        throw new IllegalStateException("Still missing images in $unresolved.value")
+      }
+    }
+
+    List<Map> deploymentDetails = imageSummaries.collect { location, summaries ->
+      summaries.findResults { summary ->
+        if (config.imageNamePattern && !(summary.imageName ==~ config.imageNamePattern)) {
+          return null
+        }
+
+        def result = [
+          ami              : summary.imageId, // TODO(ttomsu): Deprecate and remove this value.
+          imageId          : summary.imageId,
+          imageName        : summary.imageName,
+          cloudProvider    : cloudProvider,
+          refId            : stage.refId,
+          sourceServerGroup: summary.serverGroupName
+        ]
+
+        if (location.type == Location.Type.REGION) {
+          result.region = location.value
+        } else if (location.type == Location.Type.ZONE) {
+          result.zone = location.value
+        }
+
+        try {
+          result.putAll(summary.image ?: [:])
+          result.putAll(summary.buildInfo ?: [:])
+        } catch (Exception e) {
+          log.error("Unable to merge server group image/build info (summary: ${summary})", e)
+        }
+
+        return result
+      }
+    }.flatten()
 
     return new DefaultTaskResult(ExecutionStatus.SUCCEEDED, [
       amiDetails: deploymentDetails
     ], [
       deploymentDetails: deploymentDetails
     ])
+  }
+
+  static Set<String> extractBaseImageNames(Collection<String> imageNames) {
+    //in the case of two simultaneous bakes, the bakery tacks a counter on the end of the name
+    // we want to use the base form of the name, as the search will glob out to the
+    def nameCleaner = ~/(.*(?:-ebs|-s3)){1}.*/
+    imageNames.findResults {
+      def matcher = nameCleaner.matcher(it)
+      matcher.matches() ? matcher.group(1) : it
+    }.toSet()
   }
 }

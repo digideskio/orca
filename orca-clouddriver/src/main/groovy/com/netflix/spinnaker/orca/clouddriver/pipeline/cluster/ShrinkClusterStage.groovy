@@ -20,11 +20,17 @@ import com.netflix.spinnaker.orca.clouddriver.tasks.cluster.AbstractClusterWideC
 import com.netflix.spinnaker.orca.clouddriver.tasks.cluster.AbstractWaitForClusterWideClouddriverTask
 import com.netflix.spinnaker.orca.clouddriver.tasks.cluster.ShrinkClusterTask
 import com.netflix.spinnaker.orca.clouddriver.tasks.cluster.WaitForClusterShrinkTask
+import com.netflix.spinnaker.orca.pipeline.model.Stage
+import org.springframework.batch.core.Step
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Component
 
 @Component
 class ShrinkClusterStage extends AbstractClusterWideClouddriverOperationStage {
   public static final String PIPELINE_CONFIG_TYPE = "shrinkCluster"
+
+  @Autowired
+  DisableClusterStage disableClusterStage
 
   ShrinkClusterStage() {
     super(PIPELINE_CONFIG_TYPE)
@@ -38,5 +44,21 @@ class ShrinkClusterStage extends AbstractClusterWideClouddriverOperationStage {
   @Override
   Class<? extends AbstractWaitForClusterWideClouddriverTask> getWaitForTask() {
     WaitForClusterShrinkTask
+  }
+
+  @Override
+  List<Step> buildSteps(Stage stage) {
+    if (stage.context.allowDeleteActive == true) {
+      //TODO(cfieber) Remvove the stage.context.cloudProvider check once proper discovery has been added to titus
+      if (!stage.context.cloudProvider || stage.context.cloudProvider != 'titan') {
+        injectBefore(stage, "disableCluster", disableClusterStage, stage.context + [
+          remainingEnabledServerGroups  : stage.context.shrinkToSize,
+          preferLargerOverNewer         : stage.context.retainLargerOverNewer,
+          continueIfClusterNotFound     : stage.context.shrinkToSize == 0,
+          interestingHealthProviderNames: stage.context.interestingHealthProviderNames
+        ])
+      }
+    }
+    return super.buildSteps(stage)
   }
 }
