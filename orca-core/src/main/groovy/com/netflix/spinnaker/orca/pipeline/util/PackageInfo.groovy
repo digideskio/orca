@@ -21,7 +21,9 @@ import com.google.common.annotations.VisibleForTesting
 import com.netflix.spinnaker.orca.pipeline.model.Pipeline
 import com.netflix.spinnaker.orca.pipeline.model.Stage
 import groovy.transform.CompileDynamic
+import groovy.util.logging.Slf4j
 
+@Slf4j
 class PackageInfo {
   ObjectMapper mapper
   Stage stage
@@ -44,7 +46,7 @@ class PackageInfo {
     potentialUrl ==~ /\b(https?|ssh):\/\/.*/
   }
 
-  public Map findTargetPackage() {
+  public Map findTargetPackage(boolean allowMissingPackageInstallation) {
     Map requestMap = [:]
     // copy the context since we may modify it in createAugmentedRequest
     requestMap.putAll(stage.execution.context)
@@ -56,7 +58,7 @@ class PackageInfo {
       if (requestMap.buildInfo) { // package was built as part of the pipeline
         buildInfo = mapper.convertValue(requestMap.buildInfo, Map)
       }
-      return createAugmentedRequest(trigger, buildInfo, requestMap)
+      return createAugmentedRequest(trigger, buildInfo, requestMap, allowMissingPackageInstallation)
     }
     return requestMap
   }
@@ -72,12 +74,12 @@ class PackageInfo {
    */
   @CompileDynamic
   @VisibleForTesting
-  private Map createAugmentedRequest(Map trigger, Map buildInfo, Map request) {
+  private Map createAugmentedRequest(Map trigger, Map buildInfo, Map request, boolean allowMissingPackageInstallation) {
 
     List<Map> triggerArtifacts = trigger?.buildInfo?.artifacts ?: trigger?.parentExecution?.trigger?.buildInfo?.artifacts
     List<Map> buildArtifacts = buildInfo?.artifacts
 
-    if (isUrl(request.package)) {
+    if (isUrl(request.package) || request.package?.isEmpty() || !request.package) {
       return request
     }
 
@@ -166,7 +168,7 @@ class PackageInfo {
     }
 
     // If it hasn't been possible to match a package and allowMissingPackageInstallation is false raise an exception.
-    if (missingPrefixes && !request.allowMissingPackageInstallation) {
+    if (missingPrefixes && !allowMissingPackageInstallation) {
       throw new IllegalStateException("Unable to find deployable artifact starting with ${missingPrefixes} and ending with ${fileExtension} in ${buildArtifacts} and ${triggerArtifacts}. Make sure your deb package file name complies with the naming convention: name_version-release_arch.")
     }
 
@@ -209,8 +211,25 @@ class PackageInfo {
 
   @CompileDynamic
   private Map filterArtifacts(List<Map> artifacts, String prefix, String fileExtension) {
-    artifacts.find {
-      it.fileName?.startsWith(prefix) && it.fileName?.endsWith(fileExtension)
+    if (packageType == 'rpm') {
+      filterRPMArtifacts(artifacts, prefix)
+    } else {
+      artifacts.find {
+        it.fileName?.startsWith(prefix) && it.fileName?.endsWith(fileExtension)
+      }
+    }
+  }
+
+  @CompileDynamic
+  private Map filterRPMArtifacts(List<Map> artifacts, String prefix) {
+    artifacts.find { artifact ->
+      List<String> parts = artifact.fileName?.tokenize(versionDelimiter)
+      if (parts.size >= 3) {
+        parts.pop()
+        parts.pop()
+        String appName = parts.join(versionDelimiter)
+        return "${appName}${versionDelimiter}" == prefix
+      }
     }
   }
 

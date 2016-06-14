@@ -28,7 +28,7 @@ import groovy.transform.Immutable
 @Immutable(copyWith = true)
 @CompileStatic
 class BakeRequest {
-  static final Default = new BakeRequest(System.getProperty("user.name"), null, null, null, null, null, CloudProviderType.aws, Label.release, "ubuntu", null, null, null, null, null, null, null, false, null, null)
+  static final Default = new BakeRequest(System.getProperty("user.name"), null, null, null, null, null, CloudProviderType.aws, Label.release, "ubuntu", null, null, null, null, null, null, null, null, null)
 
   String user
   @JsonProperty("package") String packageName
@@ -46,13 +46,12 @@ class BakeRequest {
   Boolean enhancedNetworking
   String amiName
   String amiSuffix
-  Boolean allowMissingPackageInstallation
 
   String templateFileName
   Map extendedAttributes
 
   static enum CloudProviderType {
-    aws, docker, gce
+    aws, azure, docker, gce
   }
 
   static enum Label {

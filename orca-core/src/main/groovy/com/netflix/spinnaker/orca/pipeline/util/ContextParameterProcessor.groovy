@@ -18,6 +18,8 @@ package com.netflix.spinnaker.orca.pipeline.util
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.netflix.spinnaker.orca.ExecutionStatus
+import com.netflix.spinnaker.orca.pipeline.model.Pipeline
+import com.netflix.spinnaker.orca.pipeline.model.Stage
 import org.springframework.expression.AccessException
 import org.springframework.expression.EvaluationContext
 import org.springframework.expression.Expression
@@ -59,13 +61,23 @@ class ContextParameterProcessor {
     transform(parameters, precomputeValues(context), allowUnknownKeys)
   }
 
+  static Map<String, Object> buildExecutionContext(Stage stage, boolean includeStageContext) {
+    def augmentedContext = [:] + (includeStageContext ? stage.context : [:])
+    if (stage.execution instanceof Pipeline) {
+      augmentedContext.put('trigger', ((Pipeline) stage.execution).trigger)
+      augmentedContext.put('execution', stage.execution)
+    }
+
+    return augmentedContext
+  }
+
   static boolean containsExpression(String value) {
     return value?.contains(parserContext.getExpressionPrefix())
   }
 
   static Map precomputeValues(Map context) {
 
-    if(context.trigger?.parameters) {
+    if (context.trigger?.parameters) {
       context.parameters = context.trigger.parameters
     }
 
@@ -114,13 +126,22 @@ class ContextParameterProcessor {
       Object convertedValue = parameters.toString()
       EvaluationContext evaluationContext = new StandardEvaluationContext(context)
       evaluationContext.addPropertyAccessor(allowUnknownKeys ? allowUnknownKeysAccessor : requireKeysAccessor)
-      evaluationContext.registerFunction('alphanumerical', ContextStringUtilities.getDeclaredMethod("alphanumerical", String))
-      evaluationContext.registerFunction('toJson', ContextStringUtilities.getDeclaredMethod("toJson", Object))
-      evaluationContext.registerFunction('readJson', ContextStringUtilities.getDeclaredMethod("readJson", String))
-      evaluationContext.registerFunction('toInt', ContextStringUtilities.getDeclaredMethod("toInt", String))
-      evaluationContext.registerFunction('toFloat', ContextStringUtilities.getDeclaredMethod("toFloat", String))
-      evaluationContext.registerFunction('fromUrl', ContextStringUtilities.getDeclaredMethod("fromUrl", String))
-      evaluationContext.registerFunction('jsonFromUrl', ContextStringUtilities.getDeclaredMethod("jsonFromUrl", String))
+      evaluationContext.registerFunction('alphanumerical', ContextUtilities.getDeclaredMethod("alphanumerical", String))
+      evaluationContext.registerFunction('toJson', ContextUtilities.getDeclaredMethod("toJson", Object))
+      evaluationContext.registerFunction('readJson', ContextUtilities.getDeclaredMethod("readJson", String))
+      evaluationContext.registerFunction('toInt', ContextUtilities.getDeclaredMethod("toInt", String))
+      evaluationContext.registerFunction('toFloat', ContextUtilities.getDeclaredMethod("toFloat", String))
+      evaluationContext.registerFunction('toBoolean', ContextUtilities.getDeclaredMethod("toBoolean", String))
+      evaluationContext.registerFunction('fromUrl', ContextUtilities.getDeclaredMethod("fromUrl", String))
+      evaluationContext.registerFunction('jsonFromUrl', ContextUtilities.getDeclaredMethod("jsonFromUrl", String))
+      evaluationContext.registerFunction('stage', ContextUtilities.getDeclaredMethod("stage", Object, String))
+      evaluationContext.registerFunction('judgment', ContextUtilities.getDeclaredMethod("judgment", Object, String))
+
+      ["judgment", "stage"].each { contextAwareStageFunction ->
+        if (convertedValue.contains("#${contextAwareStageFunction}(")) {
+          convertedValue = convertedValue.replaceAll("#${contextAwareStageFunction}\\(", "#${contextAwareStageFunction}( #root.execution, ")
+        }
+      }
 
       try {
         Expression exp = parser.parseExpression(convertedValue, parserContext)
@@ -141,7 +162,8 @@ class ContextParameterProcessor {
 
 }
 
-abstract class ContextStringUtilities {
+abstract class ContextUtilities {
+
   static String alphanumerical(String str) {
     str.replaceAll('[^A-Za-z0-9]', '')
   }
@@ -158,16 +180,28 @@ abstract class ContextStringUtilities {
     Float.valueOf(str)
   }
 
+  static Boolean toBoolean(String str) {
+    Boolean.valueOf(str)
+  }
+
   static String fromUrl(String url) {
     new URL(url).text
   }
 
-  static Object readJson(String text){
+  static Object readJson(String text) {
     new ObjectMapper().readValue(text, text.startsWith('[') ? List : Map)
   }
 
   static Object jsonFromUrl(String url) {
     readJson(fromUrl(url))
+  }
+
+  static Object stage(Object context, String id) {
+    context.stages?.find { it.name == id }
+  }
+
+  static String judgment(Object context, String id) {
+    context.stages?.find { it.name == id && it.type == 'manualJudgment' }?.context?.judgmentInput
   }
 
 }
